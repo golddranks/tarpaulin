@@ -121,10 +121,32 @@ impl SourceAnalysis {
     }
 
     fn visit_closure(&mut self, closure: &ExprClosure, ctx: &Context) -> SubResult {
-        let res = self.process_expr(&closure.body, ctx);
+        // For block bodies, process the statements directly. Going through
+        // `process_expr`/`visit_block` would ignore the block's tokens if the
+        // body is unreachable, and those tokens include the outer `{` and `}`
+        // which often share lines with the closure's enclosing call — losing
+        // the call's coverage.
+        let res = if let Expr::Block(b) = &*closure.body {
+            self.process_statements(&b.block.stmts, ctx)
+        } else {
+            self.process_expr(&closure.body, ctx)
+        };
         // Even if a closure is "unreachable" it might be part of a chained method
         // call and I don't want that propagating up.
         if res.is_unreachable() {
+            // Compact non-block bodies (e.g., `|_| unreachable!()`) sit on the
+            // same line as the closure's enclosing call. `process_expr` /
+            // `visit_macro_call` will have ignored the body's tokens on the
+            // unreachable path, which also blanks out the call. Un-ignore the
+            // single shared line so the call's coverage survives.
+            if !matches!(&*closure.body, Expr::Block(_)) {
+                let start = closure.body.span().start().line;
+                let end = closure.body.span().end().line;
+                if start == end {
+                    let analysis = self.get_line_analysis(ctx.file.to_path_buf());
+                    analysis.ignore.remove(&Lines::Line(start));
+                }
+            }
             SubResult::Ok
         } else {
             res
@@ -312,6 +334,9 @@ impl SourceAnalysis {
                 analysis.add_to_ignore(lines);
             }
             self.process_expr(&call.func, ctx);
+            for arg in &call.args {
+                self.process_expr(arg, ctx);
+            }
         } else {
             let analysis = self.get_line_analysis(ctx.file.to_path_buf());
             analysis.ignore_tokens(call);
@@ -329,6 +354,9 @@ impl SourceAnalysis {
             let lines = (start..range.end).filter(|x| !lines.contains(x));
             let analysis = self.get_line_analysis(ctx.file.to_path_buf());
             analysis.add_to_ignore(lines);
+            for arg in &meth.args {
+                self.process_expr(arg, ctx);
+            }
         } else {
             let analysis = self.get_line_analysis(ctx.file.to_path_buf());
             analysis.ignore_tokens(meth);

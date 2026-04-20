@@ -1593,6 +1593,12 @@ fn cover_callable_noargs() {
 
 #[test]
 fn filter_closure_contents() {
+    // Closures passed as call arguments have their bodies walked like any
+    // other expression, so `unreachable!()` inside a closure gets the same
+    // macro filtering as it would elsewhere — its line is ignored.
+    // Unreachability from the closure body must NOT propagate up to the
+    // enclosing fn, though: `visit_closure` deliberately returns `Ok` so
+    // `inline_func` as a whole is still considered reachable.
     let config = Config::default();
     let ctx = Context {
         config: &config,
@@ -1609,7 +1615,11 @@ fn filter_closure_contents() {
     let mut analysis = SourceAnalysis::new();
     analysis.process_items(&parser.items, &ctx);
     let lines = analysis.get_line_analysis(ctx.file.to_path_buf());
-    assert!(!lines.ignore.contains(&Lines::Line(3)));
+    // `unreachable!();` on L3 — filtered by macro handling.
+    assert!(lines.ignore.contains(&Lines::Line(3)));
+    // `fn inline_func` on L1 — must remain a known function (not marked
+    // unreachable as a whole).
+    assert!(lines.functions.contains_key("inline_func"));
 }
 
 #[test]
