@@ -272,6 +272,16 @@ impl LineAnalysis {
             || (self.max_line > 0 && self.max_line < line)
     }
 
+    /// Returns true iff `line` was marked for force-coverage — i.e. it sits
+    /// inside a fn body that `cover_span` was called on (generic, `#[inline]`,
+    /// or a method on a generic impl). Such lines are expected to be covered
+    /// by tarpaulin even when LLVM does not anchor a region to them, so
+    /// downstream visitors use this to selectively ignore lines that would
+    /// otherwise be false-negative misses.
+    pub fn is_force_covered(&self, line: usize) -> bool {
+        self.cover.contains(&line)
+    }
+
     /// Adds a line to the list of lines to ignore
     fn add_to_ignore(&mut self, lines: impl IntoIterator<Item = usize>) {
         if !self.ignore.contains(&Lines::All) {
